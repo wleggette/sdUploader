@@ -6,7 +6,7 @@ import requests
 from dotenv import load_dotenv
 from datetime import datetime
 import jsonpickle
-
+from typing import Dict
 
 
 load_dotenv()
@@ -26,7 +26,8 @@ class Deployment:
         self.deployment_end = deployment_end
 
 
-def fetch_camera_deployments():
+def fetch_camera_deployments() -> Dict[str, Deployment]:
+    logger.debug("Fetching camera deployments from WILDMILE server")
     try:
         resp = requests.get(url=DEPLOYMENT_API)
         data = resp.json()
@@ -48,8 +49,8 @@ def fetch_camera_deployments():
         for deployment in sorted_deployments:
             deployment_map[deployment.cameraid] = deployment
 
+        logger.debug(f"Found {len(deployment_map)} unique deployments")
         return deployment_map
-
 
     except Exception as e:
         msg = f"Error fetching camera ids: {str(e)}"

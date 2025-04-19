@@ -23,6 +23,7 @@ from utils.card_metadata import create_download_folder
 
 from utils.sdcard_loader import DevNameSDCardLoader
 from utils.copy_tools import FileManifest
+from utils.camera_info_loader import fetch_camera_deployments
 
 from upload_manager import UploadManager
 
@@ -31,9 +32,10 @@ from upload_manager import UploadManager
 class DataEntryForm:
     def __init__(self):
         pass
-    def show_form(self, container_frame, drive, callback):
+    def show_form(self, container_frame, drive, deployments, callback):
         self.container_frame = container_frame
         self.drive = drive
+        self.deployments = deployments
         self.callback = callback
 
         ttk.Label(self.container_frame, text=f"Step 1: Enter card metadata").grid(row=0, column=0, sticky=W, padx=10, pady=10)
@@ -41,31 +43,37 @@ class DataEntryForm:
         self.entry_window.grid(pady=20, padx=10)
         self.create_data_entry_fields(self.entry_window)
 
+    def load_default_camera_names(self):
+        camera_table = csv_tools.rows('data/camera_inventory.csv')
+        camera_names = [row['cameraID'] for row in camera_table]
+        camera_names.sort()
+        return camera_names
+
     def create_data_entry_fields(self, manual_frame):
         self.photographer = StringVar()
         ttk.Label(manual_frame, text="Photographer").grid(column=0, row=1, sticky=W)
         ttk.Label(manual_frame, text="Who took or uploaded these photos").grid(column=2, row=1, sticky=W)
-        self.nameEntry = ttk.Entry(manual_frame, width=7, textvariable=self.photographer)
-        self.nameEntry.grid(column=1, row=1, sticky=(W, E))
+        self.locationNameEntry = ttk.Entry(manual_frame, width=7, textvariable=self.photographer)
+        self.locationNameEntry.grid(column=1, row=1, sticky=(W, E))
 
         # Camera Type
-        self.camera = StringVar()
+        self.cameraType = StringVar()
         ttk.Label(manual_frame, text="Camera Type").grid(column=0, row=2, sticky=W)
         ttk.Label(manual_frame, text="Type of device or use").grid(column=2, row=2, sticky=W)
-        self.cameraEntry = ttk.Combobox(manual_frame, textvariable=self.camera, values=(
-        '360Camera', 'Drone', 'GoPro', 'Wildlife_Camera', 'DSLR', 'Underwater_GoPro', 'Mixed', 'Other'))
-        self.cameraEntry.grid(column=1, row=2, sticky=(W, E))
+        self.cameraTypeEntry = ttk.Combobox(manual_frame, textvariable=self.cameraType, values=(
+        'Wildlife_Camera', '360Camera', 'Drone', 'GoPro', 'DSLR', 'Underwater_GoPro', 'Mixed', 'Other'))
+        self.cameraTypeEntry.grid(column=1, row=2, sticky=(W, E))
+        self.cameraTypeEntry.bind("<<ComboboxSelected>>", self.CameraEntryUpdate)
 
-        # Camera ID
+        # Camera ID/Name
         self.cameraid = StringVar()
-        ttk.Label(manual_frame, text="Camera ID").grid(column=0, row=3, sticky=W)
+        ttk.Label(manual_frame, text="Camera Name").grid(column=0, row=3, sticky=W)
         ttk.Label(manual_frame, text="Recommended - See camera inventory: tinyurl.com/bdhmzhme").grid(column=2, row=3,
                                                                                                       sticky=W)
-        camera_table = csv_tools.rows('data/camera_inventory.csv')
-        camera_names = [row['cameraID'] for row in camera_table]
-        camera_names.sort()
-        self.cameraIDentry = ttk.Combobox(manual_frame, textvariable=self.cameraid, values=(camera_names))
+        camera_names = self.load_default_camera_names()
+        self.cameraIDentry = ttk.Combobox(manual_frame, textvariable=self.cameraid, values=camera_names)
         self.cameraIDentry.grid(column=1, row=3, sticky=(W, E))
+        self.cameraIDentry.bind("<<ComboboxSelected>>", self.CameraIDUpdate)
 
         # Location
         self.location = StringVar()
@@ -75,8 +83,8 @@ class DataEntryForm:
         location_table = csv_tools.rows('data/camtrap_locations.csv')
         location_names = [row['locationName'] for row in location_table]
         location_names.sort()
-        self.nameEntry = ttk.Combobox(manual_frame, textvariable=self.location, values=(location_names))
-        self.nameEntry.grid(column=1, row=4, sticky=(W, E))
+        self.locationNameEntry = ttk.Combobox(manual_frame, textvariable=self.location, values=(location_names))
+        self.locationNameEntry.grid(column=1, row=4, sticky=(W, E))
 
         # Date Entry
         self.date = StringVar()
@@ -92,8 +100,27 @@ class DataEntryForm:
         submit_button = ttk.Button(manual_frame, text="Enter Camera Info", command=self.submit_form)
         submit_button.grid(row=8, column=1, padx=10, pady=10)
 
+    def CameraEntryUpdate(self, event=None):
+        logger.debug(f"CameraEntryUpdate: {self.cameraTypeEntry.get()}")
+        if self.cameraTypeEntry.get() == 'Wildlife_Camera' and len(self.deployments) > 0:
+            self.cameraIDentry.config(values=list(self.deployments.keys()))
+        else:
+            self.cameraIDentry.config(values=self.load_default_camera_names())
+
+
+    def CameraIDUpdate(self, event=None):
+        logger.debug(f"CameraIDUpdate: {self.cameraIDentry.get()}")
+        if self.cameraTypeEntry.get() == 'Wildlife_Camera' and self.cameraIDentry.get() != '':
+            deployment = self.deployments.get(self.cameraIDentry.get())
+            self.locationNameEntry.set(deployment.location)
+
+
+    def load_wildlife_camera_deployments(self):
+        deployment_map = fetch_camera_deployments()
+        logger.debug(f"Camera deployments loaded: {deployment_map}")
+
     def submit_form(self):
-        self.camera_info = CameraInfo(camera=self.camera.get(),
+        self.camera_info = CameraInfo(camera=self.cameraType.get(),
                                       cameraid=self.cameraid.get(),
                                       location=self.location.get(),
                                       date=self.dateEntry.get_date(),
@@ -101,6 +128,12 @@ class DataEntryForm:
                                       photographer=self.photographer.get())
         logger.debug(f"Camera info submitted: {self.camera_info}")
         self.callback()
+
+
+
+
+
+
 
 
 
@@ -136,6 +169,8 @@ class SDCardUploaderGUI:
         self.update_sd_cards()
         self.create_skeleton_selection_pane(self.master)
 
+        self.deployments = {}
+        self.drive = None
 
         self.data_entry_form = DataEntryForm()
 
@@ -219,8 +254,17 @@ class SDCardUploaderGUI:
             select_btn.bind("<Enter>", self.turn_red)
 
     def get_info_and_update_gui(self, drive, drive_frame):
+
+        try:
+            self.deployments = fetch_camera_deployments()
+        except Exception as e:
+            logger.debug(f"Error fetching camera deployments: {str(e)}")
+
         # This will run in the thread
         drive.get_file_info()
+
+
+
         # Now update the GUI with the new values
         # NOTE: We are using the lambda function with after() to make sure the GUI update happens in the main thread
         self.master.after(0, lambda: self.update_gui_with_drive_info(drive, drive_frame))
@@ -244,7 +288,7 @@ class SDCardUploaderGUI:
         entry_frame = tk.Frame(self.master)
         entry_frame.grid(row=1, column=3, padx=10, pady=10, sticky=tk.W + tk.E + tk.N)
 
-        self.data_entry_form.show_form(entry_frame, self.drive, self.upload_confirmation)
+        self.data_entry_form.show_form(entry_frame, self.drive, self.deployments, self.upload_confirmation)
 
     
     def turn_red(self, event):
